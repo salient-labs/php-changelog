@@ -10,64 +10,98 @@ changelog - Generate a changelog from GitHub release notes
 
 - *<u>owner</u>*/*<u>repo</u>*...
 
-  GitHub repository with release notes
+  One or more GitHub repositories with release notes.
 
-  The first repo passed to **`changelog`** is regarded as the primary repository.
+  The first repository passed to **`changelog`** is regarded as the primary
+  repository.
 
-- **`-n`**, **`--name`** *<u>name</u>*,...
+- **`-n`**, **`--name`** *<u>name</u>*,...
 
-  Name to use instead of *<u>owner</u>*/*<u>repo</u>*
+  Name to use instead of *<u>owner</u>*/*<u>repo</u>* when referring to the repository.
 
   May be given once per repository.
 
-- **`-r`**, **`--releases`**\[=*<u>value</u>*,...]
+- **`-r`**, **`--releases`**\[=*<u>value</u>*,...]
 
   Include releases found in the repository?
 
-  **`changelog`** only includes releases found in the primary repository by
-  default. May be given once per repository.
+  **`changelog`** includes releases found in the primary repository by default.
+  May be given once per repository.
 
-  The default value is: `yes`
+  The default value is: `yes`
 
-- **`-m`**, **`--missing`**\[=*<u>value</u>*,...]
+- **`-m`**, **`--missing`**\[=*<u>value</u>*,...]
 
   Report releases missing from the repository?
 
   **`changelog`** doesn't report missing releases by default. May be given once
   per repository.
 
-  The default value is: `yes`
+  The default value is: `yes`
 
-- **`-h`**, **`--headings`** (`auto`|`secondary`|`all`)
+- **`-I`**, **`--include`** *<u>regex</u>*
 
-  Headings to insert above release notes
+  Regular expression for releases to include.
 
-  In `auto` mode (the default), headings are inserted above release notes
-  contributed by repositories other than the primary repository unless there
-  is only one contributing repository.
+  If not given, all releases are included.
+
+  Exclusions (**`-X/--exclude`**) are processed first.
+
+- **`-X`**, **`--exclude`** *<u>regex</u>*
+
+  Regular expression for releases to exclude.
+
+  If not given, no releases are excluded.
+
+- **`-F`**, **`--from`** *<u>tag_name</u>*
+
+  Exclude releases before a given tag.
+
+  This option has no effect if no release with the given *<u>tag_name</u>* is found.
+
+- **`-T`**, **`--to`** *<u>tag_name</u>*
+
+  Exclude releases after a given tag.
+
+  If no release with the given *<u>tag_name</u>* is found, an empty changelog is
+  generated.
+
+- **`-h`**, **`--headings`** (`auto`|`secondary`|`all`)
+
+  Specify headings to insert above release notes.
+
+  In `auto` mode, headings are inserted above release notes contributed by
+  repositories other than the primary repository, unless there is only one
+  contributing repository for the release.
 
   In `secondary` mode, headings are always inserted above release notes
   contributed by repositories other than the primary repository.
 
-  The default value is: `auto`
+  This option has no effect if **`-1/--merge`** is given.
 
-- **`-1`**, **`--merge`**
+  The default mode is: `auto`
 
-  Merge release notes?
+- **`-1`**, **`--merge`**
 
-  If this option is given, **`-h/--headings`** is ignored.
+  Merge release notes from all repositories.
 
-- **`-o`**, **`--output`** *<u>file</u>*
+  If this option is given, Markdown-style lists are merged and de-duplicated
+  on a best-effort basis.
 
-  Write output to a file
+- **`-o`**, **`--output`** *<u>file</u>*
 
-  If *<u>file</u>* already exists, content before the first version heading ('## \[')
-  is preserved.
+  Write output to a file.
 
-- **`-f`**, **`--flush`**
+  If *<u>file</u>* already exists, content before the first version heading is
+  preserved.
 
-  Flush cached release notes
+- **`-f`**, **`--flush`**
 
-- **`-q`**, **`--quiet`**
+  Flush cached release notes.
 
-  Only print warnings and errors
+  GitHub responses are cached for 10 minutes. Use this option to replace
+  responses cached on a previous run.
+
+- **`-q`**, **`--quiet`**
+
+  Only print warnings and errors.

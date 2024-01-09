@@ -1,9 +1,13 @@
 {
     "src": [
-        "bin",
+        "bin/changelog",
+        "scripts",
         "src",
-        "tests\/unit"
+        "tests/unit",
+        ".php-cs-fixer.dist.php"
     ],
-    "includeIfPhp": true,
+    "enable": [
+        "strict-lists"
+    ],
     "heredocIndent": "none"
 }

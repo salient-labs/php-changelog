@@ -1,0 +1,44 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run changelog, with optional arguments",
+            "type": "php",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/changelog",
+            "cwd": "${workspaceFolder}",
+            "port": 0,
+            "runtimeExecutable": "bash",
+            "runtimeArgs": [
+                "-c",
+                "eval \"args=(${*: -1})\" && php \"${@:1:$#-1}\" \"${args[@]}\"",
+                "bash",
+                "-dzend_extension=xdebug.so",
+                "-dxdebug.start_with_request=yes"
+            ],
+            "env": {
+                "XDEBUG_MODE": "debug,develop",
+                "XDEBUG_CONFIG": "client_port=${port}"
+            },
+            "xdebugSettings": {
+                "max_children": 10000,
+                "show_hidden": 1,
+                "max_data": 10000000
+            },
+            "args": [
+                "${input:changelogArgs}"
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "changelogArgs",
+            "type": "command",
+            "command": "memento.promptString",
+            "args": {
+                "id": "changelogArgs",
+                "description": "Command line arguments"
+            }
+        }
+    ]
+}

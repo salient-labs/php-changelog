@@ -7,9 +7,11 @@ use Lkrms\Cli\Catalog\CliOptionValueType as ValueType;
 use Lkrms\Cli\Exception\CliInvalidArgumentsException;
 use Lkrms\Cli\CliCommand;
 use Lkrms\Cli\CliOption as Option;
+use Lkrms\Console\Catalog\ConsoleLevel as Level;
+use Lkrms\Console\Catalog\ConsoleMessageType as MessageType;
 use Lkrms\Curler\Curler;
 use Lkrms\Facade\Console;
-use Lkrms\Http\Auth\AccessToken;
+use Lkrms\Http\OAuth2\AccessToken;
 use Lkrms\Http\HttpHeaders;
 use Lkrms\Utility\Convert;
 use Lkrms\Utility\Env;
@@ -19,40 +21,49 @@ use Lkrms\Utility\Str;
 use DateTimeImmutable;
 use ReflectionParameter;
 
-/**
- * Generate a changelog from GitHub release notes across one or more repos
- */
 final class FromGitHubReleaseNotes extends CliCommand
 {
     /**
-     * @var string[]|null
+     * @var string[]
      */
-    private ?array $Repos;
+    private array $Repos = [];
 
     /**
-     * @var string[]|null
+     * @var string[]
      */
-    private ?array $Names;
+    private array $Names = [];
 
     /**
-     * @var bool[]|null
+     * @var bool[]
      */
-    private ?array $RepoReleases;
+    private array $RepoReleases = [];
 
     /**
-     * @var bool[]|null
+     * @var bool[]
      */
-    private ?array $RepoReportMissing;
+    private array $RepoReportMissing = [];
 
-    private ?string $Headings;
+    private ?string $IncludeRegex = null;
 
-    private ?bool $Merge;
+    private ?string $ExcludeRegex = null;
 
-    private ?string $OutputFile;
+    private ?string $FromTag = null;
 
-    private ?bool $Flush;
+    private ?string $ToTag = null;
 
-    private ?bool $Quiet;
+    private string $Headings = '';
+
+    private bool $Merge = false;
+
+    private ?string $OutputFile = null;
+
+    private bool $Flush = false;
+
+    private bool $Quiet = false;
+
+    // --
+
+    private static string $LinesToListsRegex;
 
     public function description(): string
     {
@@ -63,12 +74,13 @@ final class FromGitHubReleaseNotes extends CliCommand
     {
         return [
             Option::build()
-                ->long('repo')
+                ->name('repo')
                 ->valueName('<owner>/<repo>')
                 ->description(<<<EOF
-GitHub repository with release notes
+One or more GitHub repositories with release notes.
 
-The first repo passed to `{{program}}` is regarded as the primary repository.
+The first repository passed to `{{program}}` is regarded as the primary
+repository.
 EOF)
                 ->optionType(OptionType::VALUE_POSITIONAL)
                 ->required()
@@ -79,7 +91,7 @@ EOF)
                 ->short('n')
                 ->valueName('name')
                 ->description(<<<EOF
-Name to use instead of <owner>/<repo>
+Name to use instead of <owner>/<repo> when referring to the repository.
 
 May be given once per repository.
 EOF)
@@ -92,8 +104,8 @@ EOF)
                 ->description(<<<EOF
 Include releases found in the repository?
 
-`{{program}}` only includes releases found in the primary repository by default.
-May be given once per repository.
+`{{program}}` includes releases found in the primary repository by default. May
+be given once per repository.
 EOF)
                 ->optionType(OptionType::VALUE_OPTIONAL)
                 ->valueType(ValueType::BOOLEAN)
@@ -106,8 +118,8 @@ EOF)
                 ->description(<<<EOF
 Report releases missing from the repository?
 
-`{{program}}` doesn't report missing releases by default. May be given once
-per repository.
+`{{program}}` doesn't report missing releases by default. May be given once per
+repository.
 EOF)
                 ->optionType(OptionType::VALUE_OPTIONAL)
                 ->valueType(ValueType::BOOLEAN)
@@ -115,17 +127,67 @@ EOF)
                 ->defaultValue('yes')
                 ->bindTo($this->RepoReportMissing),
             Option::build()
+                ->long('include')
+                ->short('I')
+                ->valueName('regex')
+                ->description(<<<EOF
+Regular expression for releases to include.
+
+If not given, all releases are included.
+
+Exclusions (`-X/--exclude`) are processed first.
+EOF)
+                ->optionType(OptionType::VALUE)
+                ->bindTo($this->IncludeRegex),
+            Option::build()
+                ->long('exclude')
+                ->short('X')
+                ->valueName('regex')
+                ->description(<<<EOF
+Regular expression for releases to exclude.
+
+If not given, no releases are excluded.
+EOF)
+                ->optionType(OptionType::VALUE)
+                ->bindTo($this->ExcludeRegex),
+            Option::build()
+                ->long('from')
+                ->short('F')
+                ->valueName('<tag_name>')
+                ->description(<<<EOF
+Exclude releases before a given tag.
+
+This option has no effect if no release with the given <tag_name> is found.
+EOF)
+                ->optionType(OptionType::VALUE)
+                ->bindTo($this->FromTag),
+            Option::build()
+                ->long('to')
+                ->short('T')
+                ->valueName('<tag_name>')
+                ->description(<<<EOF
+Exclude releases after a given tag.
+
+If no release with the given <tag_name> is found, an empty changelog is
+generated.
+EOF)
+                ->optionType(OptionType::VALUE)
+                ->bindTo($this->ToTag),
+            Option::build()
                 ->long('headings')
                 ->short('h')
+                ->valueName('mode')
                 ->description(<<<EOF
-Headings to insert above release notes
+Specify headings to insert above release notes.
 
-In _auto_ mode (the default), headings are inserted above release notes
-contributed by repositories other than the primary repository unless there is
-only one contributing repository.
+In _auto_ mode, headings are inserted above release notes contributed by
+repositories other than the primary repository, unless there is only one
+contributing repository for the release.
 
 In _secondary_ mode, headings are always inserted above release notes
 contributed by repositories other than the primary repository.
+
+This option has no effect if `-1/--merge` is given.
 EOF)
                 ->optionType(OptionType::ONE_OF)
                 ->allowedValues(['auto', 'secondary', 'all'])
@@ -135,9 +197,10 @@ EOF)
                 ->long('merge')
                 ->short('1')
                 ->description(<<<EOF
-Merge release notes?
+Merge release notes from all repositories.
 
-If this option is given, `-h/--headings` is ignored.
+If this option is given, Markdown-style lists are merged and de-duplicated on a
+best-effort basis.
 EOF)
                 ->bindTo($this->Merge),
             Option::build()
@@ -145,10 +208,9 @@ EOF)
                 ->short('o')
                 ->valueName('file')
                 ->description(<<<EOF
-Write output to a file
+Write output to a file.
 
-If <file> already exists, content before the first version heading ('## \[') is
-preserved.
+If <file> already exists, content before the first version heading is preserved.
 EOF)
                 ->optionType(OptionType::VALUE)
                 ->bindTo($this->OutputFile),
@@ -156,14 +218,17 @@ EOF)
                 ->long('flush')
                 ->short('f')
                 ->description(<<<EOF
-Flush cached release notes
+Flush cached release notes.
+
+GitHub responses are cached for 10 minutes. Use this option to replace responses
+cached on a previous run.
 EOF)
                 ->bindTo($this->Flush),
             Option::build()
                 ->long('quiet')
                 ->short('q')
                 ->description(<<<EOF
-Only print warnings and errors
+Only print warnings and errors.
 EOF)
                 ->bindTo($this->Quiet),
         ];
@@ -184,10 +249,9 @@ EOF)
         Console::registerStderrTarget();
 
         $this->Names += $this->Repos;
-        if ($this->RepoReleases === null) {
-            $this->RepoReleases = [
-                true,
-            ];
+
+        if ($this->RepoReleases === []) {
+            $this->RepoReleases = [true];
         }
 
         $repoCount = count($this->Repos);
@@ -202,7 +266,12 @@ EOF)
         if (($token = Env::get('GITHUB_TOKEN', null)) !== null) {
             $token = new AccessToken($token, 'Bearer', null);
             $headers = $headers->authorize($token);
-            Console::log('GITHUB_TOKEN value applied from environment to GitHub API requests');
+            Console::message(
+                Level::INFO,
+                'GITHUB_TOKEN value applied from environment to GitHub API requests',
+                null,
+                MessageType::SUCCESS
+            );
         }
 
         /**
@@ -233,11 +302,6 @@ EOF)
          */
         $prevReleases = [];
 
-        $linesToListsRegex =
-            $this->Merge
-                ? (new ReflectionParameter([Convert::class, 'linesToLists'], 'regex'))->getDefaultValue()
-                : null;
-
         // Populate the arrays above
         foreach ($this->Repos as $i => $repo) {
             if (!Pcre::match('%^(?P<owner>[^/]+)/(?P<repo>[^/]+)$%', $repo, $matches)) {
@@ -250,24 +314,25 @@ EOF)
             $repoUrls[$i] = sprintf('https://github.com/%s/%s', $owner, $repo);
 
             $this->Quiet || Console::info('Retrieving releases from', $url);
+            /** @var array<array{tag_name:string,created_at:string,body?:string|null}> */
             $releases = Curler::build()
                 ->baseUrl("$url?per_page=100")
                 ->headers($headers)
                 ->cacheResponse()
                 ->expiry(600)
-                ->flush($this->Flush ?? false)
+                ->flush($this->Flush)
                 ->getAllLinked();
             $this->Quiet || Console::log(Convert::plural(count($releases), 'release', null, true) . ' found');
 
             $prevTag = null;
             foreach ($releases as $release) {
                 $tag = $release['tag_name'];
-                if (($this->RepoReleases[$i] ?? null) || ($releaseNotes[$tag] ?? null)) {
-                    $body = trim($release['body'] ?? '');
-                    $releaseNotes[$tag][$i] = $body === '' ? null : $body;
+                if (isset($this->RepoReleases[$i]) || isset($releaseNotes[$tag])) {
+                    $releaseNotes[$tag][$i] = Str::coalesce(trim($release['body'] ?? ''), null);
                 }
-                if (!($releaseDates[$tag] ?? null)) {
-                    $releaseDates[$tag] = new DateTimeImmutable($release['created_at']);
+                $releaseDates[$tag] ??= new DateTimeImmutable($release['created_at']);
+                if (!$this->includeTag($tag)) {
+                    continue;
                 }
                 if ($prevTag !== null) {
                     $prevReleases[$i][$prevTag] = $tag;
@@ -277,21 +342,21 @@ EOF)
         }
 
         // Sort notes by tag, in descending order
-        uksort($releaseNotes, fn($a, $b) => -version_compare($a, $b));
+        uksort($releaseNotes, fn(string $a, string $b) => -version_compare($a, $b));
 
         // Extract header content from the output file if it already exists
-        $eol = PHP_EOL;
+        $eol = \PHP_EOL;
         if ($this->OutputFile !== null) {
             $input = '';
             if (file_exists($this->OutputFile)) {
-                $eol = File::getEol($this->OutputFile) ?: PHP_EOL;
-                $input = file_get_contents($this->OutputFile);
+                $eol = File::getEol($this->OutputFile) ?: \PHP_EOL;
+                $input = File::getContents($this->OutputFile);
                 if (($pos = strpos($input, '## [')) !== false ||
                         ($pos = strpos($input, "{$eol}## [")) !== false) {
                     $input = substr($input, 0, $pos);
                 }
             }
-            $fp = fopen($this->OutputFile, 'wb');
+            $fp = File::open($this->OutputFile, 'wb');
             $input = rtrim($input);
             if ($input === '') {
                 $input = <<<EOF
@@ -312,12 +377,32 @@ EOF;
             }
             fprintf($fp, "%s{$eol}{$eol}", $input);
         } else {
-            $fp = STDOUT;
+            $fp = \STDOUT;
         }
 
         $releaseUrls = [];
         $repoReleaseUrls = [];
+        $tags = 0;
+        $break = false;
         foreach ($releaseNotes as $tag => $notes) {
+            if ($break) {
+                break;
+            }
+
+            if (!$tags && $this->ToTag !== null && $this->ToTag !== $tag) {
+                continue;
+            }
+
+            if ($this->FromTag !== null && $this->FromTag === $tag) {
+                $break = true;
+            }
+
+            $tags++;
+
+            if (!$this->includeTag($tag, false)) {
+                continue;
+            }
+
             $missing = $reportMissing;
             $blocks = [];
             $noteCount = 0;
@@ -325,15 +410,13 @@ EOF;
             foreach ($notes as $i => $note) {
                 unset($missing[$i]);
 
+                $prevTag = $prevReleases[$i][$tag] ?? null;
                 $releaseUrl =
                     $repoUrls[$i]
-                    . ((($prevTag = $prevReleases[$i][$tag] ?? null) === null)
+                    . ($prevTag === null || $break
                         ? "/releases/tag/{$tag}"
                         : "/compare/{$prevTag}...{$tag}");
-
-                if (($releaseUrls[$tag] ?? null) === null) {
-                    $releaseUrls[$tag] = $releaseUrl;
-                }
+                $releaseUrls[$tag] ??= $releaseUrl;
 
                 if ($note === null) {
                     continue;
@@ -381,7 +464,7 @@ EOF;
 
             if ($this->Merge) {
                 $blocks = implode("\n\n", $blocks);
-                $merged = Convert::linesToLists($blocks, "\n\n", null, $linesToListsRegex, false, true);
+                $merged = Convert::linesToLists($blocks, "\n\n", null, $this->getLinesToListsRegex(), false, true);
                 fprintf($fp, "%s{$eol}{$eol}", Str::setEol($merged, $eol));
                 continue;
             }
@@ -407,5 +490,29 @@ EOF;
         if ($this->OutputFile !== null) {
             fclose($fp);
         }
+    }
+
+    private function includeTag(string $tag, bool $checkFromTag = true): bool
+    {
+        if ($this->ExcludeRegex !== null && Pcre::match($this->ExcludeRegex, $tag)) {
+            return false;
+        }
+        if ($this->IncludeRegex !== null && !Pcre::match($this->IncludeRegex, $tag)) {
+            return false;
+        }
+        if ($checkFromTag && $this->FromTag !== null && version_compare($tag, $this->FromTag) < 0) {
+            return false;
+        }
+        return true;
+    }
+
+    private static function getLinesToListsRegex(): string
+    {
+        if (isset(self::$LinesToListsRegex)) {
+            return self::$LinesToListsRegex;
+        }
+        /** @var string */
+        $default = (new ReflectionParameter([Convert::class, 'linesToLists'], 'regex'))->getDefaultValue();
+        return self::$LinesToListsRegex = $default;
     }
 }

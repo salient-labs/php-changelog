@@ -11,8 +11,9 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   release:
-    name: Create release
-    needs: ci
+    name: Build phar and create release
+    needs:
+      - ci
     runs-on: ubuntu-latest
 
     steps:
@@ -25,13 +26,25 @@ jobs:
           php-version: "8.3"
           coverage: none
 
+      - name: Get Composer cache directory
+        id: get-composer-cache
+        shell: bash
+        run: printf 'cache_dir=%s\n' "$(composer config cache-files-dir)" >>"$GITHUB_OUTPUT"
+
+      - name: Cache PHP dependencies
+        uses: actions/cache@v3
+        with:
+          path: ${{ steps.get-composer-cache.outputs.cache_dir }}
+          key: composer-cache-${{ runner.os }}-${{ hashFiles('**/composer.json', '**/composer.lock') }}
+          restore-keys: composer-cache-${{ runner.os }}-
+
       - name: Install dependencies
         run: composer install --no-interaction --no-progress
 
       - name: Run build script
         run: |
           scripts/build.sh ${{ github.ref_name }}
-          printf '%s\n' build/dist/* | head -n1 | sed 's/^/phar_path=/' >>"$GITHUB_ENV"
+          printf 'phar_path=%s\n' build/dist/* | head -n1 >>"$GITHUB_ENV"
 
       # Requires Actions > General > Workflow permissions > Read and write permissions
       - name: Create release

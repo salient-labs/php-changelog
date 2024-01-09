@@ -17,7 +17,7 @@
     ],
     "require": {
         "php": ">=7.4",
-        "lkrms/util": "^0.21.12"
+        "lkrms/util": "^0.21.19"
     },
     "require-dev": {
         "phpstan/extension-installer": "^1",
